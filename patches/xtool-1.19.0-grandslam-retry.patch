@@ -1,0 +1,267 @@
+diff --git a/Sources/XKit/GrandSlam/GrandSlamClient.swift b/Sources/XKit/GrandSlam/GrandSlamClient.swift
+index 2c17236..f87f7da 100644
+--- a/Sources/XKit/GrandSlam/GrandSlamClient.swift
++++ b/Sources/XKit/GrandSlam/GrandSlamClient.swift
+@@ -41,7 +41,8 @@ struct GrandSlamClient: Sendable {
+         }
+         request.configure(request: &httpRequest, deviceInfo: deviceInfo, anisetteData: anisetteData)
+
+-        let resp = try await httpClient.makeRequest(httpRequest, body: body)
++        let resp = try await httpClient.makeIsolatedRequest(httpRequest, body: body)
++        try GrandSlamRetry.validate(response: resp.response, body: resp.body)
+         return try R.Decoder.decode(data: resp.body)
+     }
+
+diff --git a/Sources/XKit/GrandSlam/GrandSlamRetry.swift b/Sources/XKit/GrandSlam/GrandSlamRetry.swift
+new file mode 100644
+index 0000000..998a183
+--- /dev/null
++++ b/Sources/XKit/GrandSlam/GrandSlamRetry.swift
+@@ -0,0 +1,59 @@
++import Foundation
++import HTTPTypes
++
++struct GrandSlamTransientResponseError: Error, LocalizedError, Sendable {
++    let statusCode: Int
++    let returnedHTML: Bool
++
++    var errorDescription: String? {
++        if returnedHTML {
++            return "Apple GrandSlam returned an HTML response (HTTP \(statusCode))."
++        }
++        return "Apple GrandSlam returned a temporary server error (HTTP \(statusCode))."
++    }
++}
++
++enum GrandSlamRetry {
++    static let maximumAttempts = 5
++
++    static func validate(response: HTTPResponse, body: Data) throws {
++        let returnedHTML = isHTML(response: response, body: body)
++        let isServerError = (500...599).contains(response.status.code)
++        if returnedHTML || isServerError {
++            throw GrandSlamTransientResponseError(
++                statusCode: response.status.code,
++                returnedHTML: returnedHTML
++            )
++        }
++    }
++
++    static func sleep(afterFailedAttempt attempt: Int) async throws {
++        let seconds = 1 << min(attempt, 3)
++        try await Task.sleep(for: .seconds(seconds))
++    }
++
++    static func isHTML(response: HTTPResponse, body: Data) -> Bool {
++        let mimeType = response.headerFields[.contentType]?
++            .split(separator: ";", maxSplits: 1)
++            .first?
++            .trimmingCharacters(in: .whitespacesAndNewlines)
++            .lowercased()
++        if mimeType == "text/html" || mimeType == "application/xhtml+xml" {
++            return true
++        }
++
++        let trimCharacters = CharacterSet.whitespacesAndNewlines
++            .union(CharacterSet(charactersIn: "\u{FEFF}"))
++        var prefix = String(decoding: body.prefix(2_048), as: UTF8.self)
++            .trimmingCharacters(in: trimCharacters)
++            .lowercased()
++        if prefix.hasPrefix("<?xml"), let declarationEnd = prefix.range(of: "?>") {
++            prefix = String(prefix[declarationEnd.upperBound...])
++                .trimmingCharacters(in: trimCharacters)
++        }
++        return prefix.hasPrefix("<!doctype html")
++            || prefix.hasPrefix("<html")
++            || prefix.hasPrefix("<head")
++            || prefix.hasPrefix("<body")
++    }
++}
+diff --git a/Sources/XKit/GrandSlam/Lookup/GrandSlamLookupManager.swift b/Sources/XKit/GrandSlam/Lookup/GrandSlamLookupManager.swift
+index d734ba3..647100d 100644
+--- a/Sources/XKit/GrandSlam/Lookup/GrandSlamLookupManager.swift
++++ b/Sources/XKit/GrandSlam/Lookup/GrandSlamLookupManager.swift
+@@ -47,9 +47,17 @@ actor GrandSlamLookupManager {
+         ]
+         request.headerFields[.init("X-MMe-Country")!] = Locale.current.region?.identifier
+
+-        let (_, body) = try await httpClient.makeRequest(request)
+-
+-        return try self.decoder.decode(Response.self, from: body).urls
++        var failedAttempts = 0
++        while true {
++            do {
++                let (response, body) = try await httpClient.makeIsolatedRequest(request, body: nil)
++                try GrandSlamRetry.validate(response: response, body: body)
++                return try self.decoder.decode(Response.self, from: body).urls
++            } catch is GrandSlamTransientResponseError where failedAttempts < GrandSlamRetry.maximumAttempts - 1 {
++                try await GrandSlamRetry.sleep(afterFailedAttempt: failedAttempts)
++                failedAttempts += 1
++            }
++        }
+     }
+
+     private func fetchEndpoints() async throws -> GrandSlamEndpoints {
+diff --git a/Sources/XKit/GrandSlam/Operations/GrandSlamAuthenticateOperation.swift b/Sources/XKit/GrandSlam/Operations/GrandSlamAuthenticateOperation.swift
+index 41405e5..45014df 100644
+--- a/Sources/XKit/GrandSlam/Operations/GrandSlamAuthenticateOperation.swift
++++ b/Sources/XKit/GrandSlam/Operations/GrandSlamAuthenticateOperation.swift
+@@ -64,7 +64,7 @@ struct GrandSlamAuthenticateOperation {
+         return try await authenticate(isRetry: true)
+     }
+
+-    private func authenticate(isRetry: Bool) async throws -> GrandSlamLoginData {
++    private func performPrimaryAuthentication() async throws -> (Response, GrandSlamLoginData) {
+         var srpClient = SRPClient()
+
+         srpClient.add(string: GrandSlamAuthInitRequest.protocols.joined(separator: ","))
+@@ -106,6 +106,23 @@ struct GrandSlamAuthenticateOperation {
+
+         let loginData = try decoder.decode(GrandSlamLoginData.self, from: rawLoginResponse)
+
++        return (response, loginData)
++    }
++
++    private func authenticate(isRetry: Bool) async throws -> GrandSlamLoginData {
++        var failedAttempts = 0
++        let response: Response
++        let loginData: GrandSlamLoginData
++        while true {
++            do {
++                (response, loginData) = try await performPrimaryAuthentication()
++                break
++            } catch is GrandSlamTransientResponseError where failedAttempts < GrandSlamRetry.maximumAttempts - 1 {
++                try await GrandSlamRetry.sleep(afterFailedAttempt: failedAttempts)
++                failedAttempts += 1
++            }
++        }
++
+         if response.statusCode == 409 {
+             // 2FA
+             guard !isRetry else { throw Error.failedSecondaryAuth }
+diff --git a/Sources/XKit/GrandSlam/Operations/GrandSlamFetchAppTokensOperation.swift b/Sources/XKit/GrandSlam/Operations/GrandSlamFetchAppTokensOperation.swift
+index 9a26383..f1c60f8 100644
+--- a/Sources/XKit/GrandSlam/Operations/GrandSlamFetchAppTokensOperation.swift
++++ b/Sources/XKit/GrandSlam/Operations/GrandSlamFetchAppTokensOperation.swift
+@@ -71,8 +71,16 @@ struct GrandSlamFetchAppTokensOperation {
+             idmsToken: loginData.idmsToken,
+             checksum: checksum
+         )
+-        let response = try await client.send(appTokensRequest)
+-        return try await self.handle(response: response)
++        var failedAttempts = 0
++        while true {
++            do {
++                let response = try await client.send(appTokensRequest)
++                return try await self.handle(response: response)
++            } catch is GrandSlamTransientResponseError where failedAttempts < GrandSlamRetry.maximumAttempts - 1 {
++                try await GrandSlamRetry.sleep(afterFailedAttempt: failedAttempts)
++                failedAttempts += 1
++            }
++        }
+     }
+
+ }
+diff --git a/Sources/XKit/HTTPClientProtocol/HTTPClientProtocol.swift b/Sources/XKit/HTTPClientProtocol/HTTPClientProtocol.swift
+index 2e90522..8620f45 100644
+--- a/Sources/XKit/HTTPClientProtocol/HTTPClientProtocol.swift
++++ b/Sources/XKit/HTTPClientProtocol/HTTPClientProtocol.swift
+@@ -17,10 +17,22 @@ public typealias HTTPBody = OpenAPIRuntime.HTTPBody
+ public protocol HTTPClientProtocol: Sendable {
+     var asOpenAPITransport: ClientTransport { get }
+
++    func makeIsolatedRequest(
++        _ request: HTTPRequest,
++        body: Data?
++    ) async throws -> (response: HTTPResponse, body: Data)
++
+     func makeWebSocket(url: URL) async throws -> WebSocketSession
+ }
+
+ extension HTTPClientProtocol {
++    public func makeIsolatedRequest(
++        _ request: HTTPRequest,
++        body: Data? = nil
++    ) async throws -> (response: HTTPResponse, body: Data) {
++        try await makeRequest(request, body: body)
++    }
++
+     public func send(
+         _ request: HTTPRequest,
+         body: HTTPBody? = nil
+diff --git a/Sources/XKit/HTTPClientProtocol/URLSession+HTTP.swift b/Sources/XKit/HTTPClientProtocol/URLSession+HTTP.swift
+index 74527bf..1ad2461 100644
+--- a/Sources/XKit/HTTPClientProtocol/URLSession+HTTP.swift
++++ b/Sources/XKit/HTTPClientProtocol/URLSession+HTTP.swift
+@@ -56,6 +56,33 @@ private struct Client: HTTPClientProtocol {
+         URLSessionTransport(configuration: .init(session: session))
+     }
+
++    func makeIsolatedRequest(
++        _ request: HTTPRequest,
++        body: Data?
++    ) async throws -> (response: HTTPResponse, body: Data) {
++        let isolatedSession = URLSession(
++            configuration: .ephemeral,
++            delegate: clientDelegate,
++            delegateQueue: .main
++        )
++        defer { isolatedSession.finishTasksAndInvalidate() }
++
++        let transport = URLSessionTransport(configuration: .init(session: isolatedSession))
++        var baseComponents = URLComponents()
++        baseComponents.scheme = request.scheme
++        baseComponents.host = request.authority
++        let (response, responseBody) = try await transport.send(
++            request,
++            body: body.map { HTTPBody($0) },
++            baseURL: baseComponents.url!,
++            operationID: "grand-slam"
++        )
++
++        guard let responseBody else { return (response, Data()) }
++        let data = try await responseBody.reduce(into: Data()) { $0 += $1 }
++        return (response, data)
++    }
++
+     public func makeWebSocket(url: URL) async throws -> any WebSocketSession {
+         let task = session.webSocketTask(with: url)
+         let (event, eventContinuation) = AsyncStream<URLSessionWebSocketTask.CloseCode?>.makeStream()
+diff --git a/Tests/XToolTests/GrandSlamRetryTests.swift b/Tests/XToolTests/GrandSlamRetryTests.swift
+new file mode 100644
+index 0000000..1a3e8b1
+--- /dev/null
++++ b/Tests/XToolTests/GrandSlamRetryTests.swift
+@@ -0,0 +1,32 @@
++import Foundation
++import HTTPTypes
++import XCTest
++@testable import XKit
++
++final class GrandSlamRetryTests: XCTestCase {
++    func testNormalXMLPlistIsNotHTML() {
++        let response = HTTPResponse(status: .ok)
++        let body = Data("<?xml version=\"1.0\"?><plist><dict/></plist>".utf8)
++        XCTAssertFalse(GrandSlamRetry.isHTML(response: response, body: body))
++    }
++
++    func testHTMLContentTypesAreDetected() {
++        for contentType in ["text/html; charset=utf-8", "application/xhtml+xml"] {
++            var response = HTTPResponse(status: .ok)
++            response.headerFields[.contentType] = contentType
++            XCTAssertTrue(GrandSlamRetry.isHTML(response: response, body: Data()))
++        }
++    }
++
++    func testHTMLMarkersAreDetectedAfterBOMOrXMLDeclaration() {
++        let response = HTTPResponse(status: .ok)
++        let samples = [
++            "\u{FEFF}  <!DOCTYPE html><html></html>",
++            "<?xml version=\"1.0\"?>\n<html></html>",
++            "\n<head><title>Gateway Error</title></head>",
++        ]
++        for sample in samples {
++            XCTAssertTrue(GrandSlamRetry.isHTML(response: response, body: Data(sample.utf8)))
++        }
++    }
++}

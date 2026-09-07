@@ -1,0 +1,17 @@
+SideloadManager
+Copyright (c) 2026 Zhang161215
+
+This repository contains a source patch for xtool 1.19.0. xtool is an
+independent project distributed under the MIT License:
+
+  Project: https://github.com/xtool-org/xtool
+  Upstream revision: 893cf4f8f916673922a47bb94601ead6efc7669f
+  Copyright (c) 2024 Kabir Oberai
+
+The upstream xtool source and prebuilt application are not redistributed in
+this repository. See patches/xtool-1.19.0-grandslam-retry.patch for the local
+changes and LICENSES/xtool-MIT.txt for the complete upstream license text.
+
+Apple, macOS, Xcode, iPhone, and Apple ID are trademarks of Apple Inc. This
+project is independent and is not affiliated with, endorsed by, or supported
+by Apple Inc. or the xtool maintainers.

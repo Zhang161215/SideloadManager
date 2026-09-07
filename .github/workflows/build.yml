@@ -1,0 +1,34 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  manager:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and test SideloadManager
+        run: swift test -c release
+
+  patch-check:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify xtool patch
+        run: |
+          git clone --filter=blob:none https://github.com/xtool-org/xtool.git /tmp/xtool
+          git -C /tmp/xtool checkout --detach 893cf4f8f916673922a47bb94601ead6efc7669f
+          git -C /tmp/xtool apply --check "$GITHUB_WORKSPACE/patches/xtool-1.19.0-grandslam-retry.patch"
+          git -C /tmp/xtool apply "$GITHUB_WORKSPACE/patches/xtool-1.19.0-grandslam-retry.patch"
+      - name: Build and test patched xtool
+        working-directory: /tmp/xtool
+        run: swift test --filter GrandSlamRetryTests
