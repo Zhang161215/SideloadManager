@@ -19,6 +19,18 @@
 
 > 这是非官方工具，与 Apple、xtool、AltStore、AltServer 和 SideStore 的维护者均无隶属关系。相关名称归各自权利人所有。它不会绕过 Apple 的账号验证、设备限制或开发者计划规则。
 
+## 界面预览
+
+真实 macOS 应用截图，个人设备名称已遮盖。截图中的设置为示例配置，不代表默认值。
+
+### 首页与签名刷新计划
+
+![SideloadManager macOS 首页：iPhone 设备状态、托管 IPA 与签名刷新计划图表](docs/screenshots/dashboard.png)
+
+### 自动启动、定时刷新与失败重试
+
+![SideloadManager 设置：登录自启、USB 连接自动打开、定时刷新签名与失败重试](docs/screenshots/settings.png)
+
 ## SideloadManager 项目概览
 
 | 项目 | 说明 |

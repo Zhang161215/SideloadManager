@@ -17,6 +17,18 @@ The repository also contains an auditable Apple GrandSlam compatibility patch fo
 
 > SideloadManager is an unofficial project and is not affiliated with Apple or the maintainers of xtool, AltStore, AltServer, or SideStore. Those names belong to their respective owners. It does not bypass Apple account authentication, device restrictions, certificate rules, or Apple Developer Program limits.
 
+## Screenshots
+
+Actual macOS app screenshots (Chinese interface), with the personal device name redacted. The settings shown are an example configuration, not the defaults.
+
+### Dashboard and signing refresh schedule
+
+![SideloadManager macOS dashboard showing iPhone device status, managed IPA files, and the signing refresh schedule](docs/screenshots/dashboard.png)
+
+### Startup, scheduled refresh, and retry settings
+
+![SideloadManager settings for launch at login, USB auto-open, scheduled app re-signing, and failed-operation retries](docs/screenshots/settings.png)
+
 ## What problem does SideloadManager solve?
 
 - Use a macOS GUI to import, sign, install, and refresh iPhone IPA files instead of repeatedly entering xtool commands.
