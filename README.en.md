@@ -17,6 +17,8 @@ The repository also contains an auditable Apple GrandSlam compatibility patch fo
 
 > SideloadManager is an unofficial project and is not affiliated with Apple or the maintainers of xtool, AltStore, AltServer, or SideStore. Those names belong to their respective owners. It does not bypass Apple account authentication, device restrictions, certificate rules, or Apple Developer Program limits.
 
+Login failing? See [Apple login format errors in xtool, AltServer, and SideStore](docs/apple-login-format-error.md).
+
 ## Screenshots
 
 Actual macOS app screenshots (Chinese interface), with the personal device name redacted. The settings shown are an example configuration, not the defaults.

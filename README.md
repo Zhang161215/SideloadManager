@@ -19,6 +19,8 @@
 
 > 这是非官方工具，与 Apple、xtool、AltStore、AltServer 和 SideStore 的维护者均无隶属关系。相关名称归各自权利人所有。它不会绕过 Apple 的账号验证、设备限制或开发者计划规则。
 
+遇到登录错误？查看 [Apple 登录格式错误排障：xtool、AltServer、SideStore](docs/apple-login-format-error.md#中文排障说明)。
+
 ## 界面预览
 
 真实 macOS 应用截图，个人设备名称已遮盖。截图中的设置为示例配置，不代表默认值。
